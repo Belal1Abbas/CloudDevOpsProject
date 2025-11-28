@@ -1,0 +1,84 @@
+pipeline {
+    agent any
+
+    environment {
+        PATH = "/var/lib/jenkins/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin"
+        KUBECONFIG = "/var/lib/jenkins/.kube/config"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: '411605e6-f76f-4feb-a2c7-6a94b75ab940', 
+                    usernameVariable: 'GIT_USER', 
+                    passwordVariable: 'GIT_PASS'
+                )]) {
+                    git branch: 'main',
+                        url: 'https://github.com/Belal1Abbas/CloudDevOpsProject.git',
+                        credentialsId: '411605e6-f76f-4feb-a2c7-6a94b75ab940'
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    docker.build("belal90/finalproject:latest", "-f docker/Dockerfile .")
+                }
+            }
+        }
+
+        stage('Scan Image') {
+            steps {
+                sh '''
+                    mkdir -p /var/lib/jenkins/.local/bin
+                    trivy image --severity HIGH,CRITICAL --exit-code 0 belal90/finalproject:latest
+                '''
+            }
+        }
+
+        stage('Push Image') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: '49084441-3ce9-4246-a851-b3e2eab70589', 
+                    usernameVariable: 'DOCKER_USER', 
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh '''
+                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                        docker push belal90/finalproject:latest
+                        docker logout
+                    '''
+                }
+            }
+        }
+
+        stage('Update Manifests') {
+            steps {
+                sh '''
+                    sed -i 's|image: belal90/finalproject:.*|image: belal90/finalproject:latest|' k8s/deployment.yaml
+                '''
+            }
+        }
+
+        stage('Apply to Kubernetes') {
+            steps {
+                sh 'kubectl apply -f k8s/'
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Pipeline finished!'
+        }
+        success {
+            echo 'Pipeline succeeded!'
+        }
+        failure {
+            echo 'Pipeline failed! Check the logs.'
+        }
+    }
+}
+
